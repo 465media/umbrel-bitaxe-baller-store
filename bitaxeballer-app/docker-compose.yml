@@ -1,0 +1,50 @@
+# Bitaxe Baller — Umbrel compose template.
+#
+# Networking model (why it looks the way it does)
+# ------------------------------------------------
+# We need `network_mode: host` for the bitaxe-baller container so the
+# LAN scanner can probe every IP on the host's /24, and so the mDNS
+# publisher can announce `bitaxe-baller.local`. Both break under bridge
+# networking.
+#
+# But Umbrel's `app_proxy` runs on the bridge network and tries to talk
+# to the app over Docker DNS — which doesn't work when the app is on
+# host networking. The fix (cribbed from imlenti's MinerWatch compose):
+# point app_proxy at `host.docker.internal:<host-port>` via extra_hosts.
+#
+# Port routing:
+#   * manifest port (umbrel-app.yml `port: 5050`) → app_proxy publishes
+#     on host:5050, which is the Umbrel tile URL `<umbrel>:5050`
+#   * the bitaxe-baller container binds host:5051 (different port to
+#     avoid contention with the proxy on 5050)
+#   * proxy forwards 5050 → host.docker.internal:5051 → web on host net
+#   * direct LAN access at `<umbrel>:5051` also works (host networking)
+#   * mDNS publishes `bitaxe-baller.local:5051`
+#
+# Source of truth: mirrored to community-store repo at
+# github.com/465media/umbrel-bitaxe-baller-store/bitaxeballer-app/.
+
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      APP_HOST: host.docker.internal
+      APP_PORT: 5051
+      PROXY_AUTH_ADD: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  web:
+    image: ghcr.io/465media/bitaxe-baller:1.13.0@sha256:426bdb4fcaf5edba230888f19b074c6cb455b41f0a5ed0f830af640ea6b71e3b
+    restart: on-failure
+    stop_grace_period: 15s
+    network_mode: host
+    environment:
+      BITAXE_BALLER_DATA_DIR: /data
+      HOST: 0.0.0.0
+      PORT: 5051
+      MDNS_ENABLED: 1
+      BITAXE_BALLER_NO_AUTO_OPEN: 1
+    volumes:
+      - ${APP_DATA_DIR}/data:/data
